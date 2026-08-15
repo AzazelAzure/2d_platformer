@@ -1,33 +1,108 @@
 use bevy::{
     prelude::*,
-    math::bounding::{Aabb2d, BoundingCircle, BoundingVolume, IntersectsVolume},
+    camera::ScalingMode,
 };
 
-const FLOOR_THICKNESS: f32 = 10.0;
-const FLOOR_COLOR: Color = Color::srgb(1.0, 1.0, 1.0);
-const PLAYER_COLOR: Color = Color::srgb(0.0, 1.0, 0.0);
-const PLAYER_SPEED: f32 = 400.0;
+use avian2d::prelude::*;
 
-#[derive(Component, Default)]
-struct Collider;
+// Floor Constants
+const FLOOR_THICKNESS: f32 = 30.0;
+const FLOOR_COLOR: Color = Color::srgb(1.0, 1.0, 1.0);
+
+// Player Constants
+const PLAYER_COLOR: Color = Color::srgb(0.0, 1.0, 0.0);
+const PLAYER_WALK_SPEED: f32 = 400.0;
+const PLAYER_RUN_SPEED: f32 = 600.0;
+
+// Physics Constants
+const GRAVITY: f32 = -200.0;
+
+// Screen Constants
+const SCREEN_WIDTH: f32 = 800.0;
+const SCREEN_HEIGHT: f32 = 600.0;
+
+// Wall Constants
+const LEFT_WALL: f32 = -1.0 * (SCREEN_WIDTH/2.0);
+const RIGHT_WALL: f32 = SCREEN_WIDTH/2.0;
+const TOP_WALL: f32 = SCREEN_HEIGHT/2.0;
+const BOTTOM_WALL: f32 = -1.0 * (SCREEN_HEIGHT/2.0);
+const WALL_THICKNESS: f32 = 10.0;
+const WALL_COLOR: Color = Color::srgb(1.0, 0.0, 0.0);
+
+#[derive(PhysicsLayer, Default)]
+enum GameLayer {
+    #[default]
+    Default, // Layer 0 - the default layer that objects are assigned to
+    Player,  // Layer 1
+    Enemy,   // Layer 2
+    Ground,  // Layer 3
+    Floor,   // Layer 4
+}
+
 
 #[derive(Component)]
-#[require(Sprite, Transform, Collider)]
+#[require(Sprite, Transform)]
 struct Wall;
 
+enum WallLocation{
+    Left,
+    Right,
+    Top,
+    Bottom,
+}
+
+impl WallLocation{
+    fn position(&self) -> Vec2 {
+        match self{
+            WallLocation::Left => Vec2::new(LEFT_WALL, 0.0),
+            WallLocation::Top => Vec2::new(0.0, TOP_WALL),
+            WallLocation::Right => Vec2::new(RIGHT_WALL, 0.0),
+            WallLocation::Bottom => Vec2::new(0.0, BOTTOM_WALL),
+        }
+    }
+    fn size(&self) -> Vec2{
+        let arena_height = TOP_WALL - BOTTOM_WALL;
+        let arena_width = RIGHT_WALL - LEFT_WALL;
+        match self{
+            WallLocation::Left | WallLocation::Right => {
+                Vec2::new(WALL_THICKNESS, arena_height + WALL_THICKNESS)
+
+            },
+            WallLocation::Top | WallLocation::Bottom => {
+                Vec2::new(arena_width + WALL_THICKNESS, WALL_THICKNESS)
+            }
+        }
+    }
+}
+
+impl Wall{
+    fn new(location: WallLocation) -> (Wall, Sprite, Transform){(
+        Wall,
+        Sprite::from_color(WALL_COLOR, Vec2::ONE),
+        Transform{
+            translation: location.position().extend(0.0),
+            scale: location.size().extend(1.0),
+            ..default()
+        },
+    )}
+}
+
 #[derive(Component)]
-#[require(Sprite, Transform, Collider)]
+#[require(Sprite, Transform)]
 struct Floor;
 
 impl Floor{
-    fn new() -> (Floor, Sprite, Transform){
+    fn new() -> (Floor, Sprite, Transform, CollisionLayers){
         (
             Floor,
-            Sprite::from_color(FLOOR_COLOR, Vec2::new(500.0, 10.0)),
+            Sprite::from_color(FLOOR_COLOR, Vec2::new(500.0, FLOOR_THICKNESS)),
             Transform{
                 translation: Vec3::new(50.0, 10.0, 0.0),
                 ..default()
             },
+            CollisionLayers::new(
+                GameLayer::Ground,
+                [GameLayer::Player, GameLayer::Enemy]),
         )
     }
 }
@@ -40,9 +115,9 @@ struct Player;
 
 fn main() {
     App::new()
-        .add_plugins(DefaultPlugins)
+        .add_plugins((DefaultPlugins, PhysicsPlugins::default()))
         .add_systems(Startup, setup)
-        .add_systems(Update, (move_player, check_collision).chain())
+        .add_systems(Update, (player_accel, floor_collision).chain())
         .run();
 }
 
@@ -54,107 +129,87 @@ fn setup(
     ){
     
     // Camera
-    commands.spawn(Camera2d);
+    commands.spawn((
+            Camera2d,
+            Projection::Orthographic(OrthographicProjection{
+                scaling_mode: ScalingMode::AutoMin{
+                    min_width: SCREEN_WIDTH,
+                    min_height: SCREEN_HEIGHT},
+                ..OrthographicProjection::default_2d()
+            }),
+        ));
 
     // Floor
-    commands.spawn(Floor::new());
+    commands.spawn((
+        Floor::new(),
+        RigidBody::Static,
+        Collider::rectangle(500.0, FLOOR_THICKNESS),
+        CollisionEventsEnabled,
+        CollidingEntities::default(),
+        ));
 
     // Player
     commands.spawn((
         Sprite::from_color(PLAYER_COLOR, Vec2::new(50.0, 50.0)),
+        RigidBody::Kinematic,
+        Collider::rectangle(50.0, 50.0),
+        LinearDamping(0.8),
+        ConstantForce::new(0.0, -100.0),
+        CollisionEventsEnabled,
+        CollisionLayers::new(
+            GameLayer::Player,
+            [GameLayer::Ground, GameLayer::Enemy, GameLayer::Floor],
+            ),
         Transform{
-            translation: Vec3::new(51.0, 61.0, 0.0),
+            translation: Vec3::new(51.0, 55.0, 0.0),
             ..default()
             },
         Player
     ));
+
+    // Walls
+    commands.spawn(Wall::new(WallLocation::Left));
+    commands.spawn(Wall::new(WallLocation::Bottom));
+    commands.spawn(Wall::new(WallLocation::Top));
+    commands.spawn(Wall::new(WallLocation::Right));
 }
 
-fn move_player(
-        keyboard_input: Res<ButtonInput<KeyCode>>,
-        mut player_transform: Single<&mut Transform, With<Player>>,
-        time: Res<Time>,
+fn player_accel(
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    mut query: Query<&mut LinearVelocity, With<Player>>,
+    time: Res<Time>,
     ){
-    
-    let mut x_direction = 0.0;
-    let mut y_direction = 0.0;
-    
-    if keyboard_input.pressed(KeyCode::ArrowLeft){
-        x_direction -= 1.0;
-    }
-
-    if keyboard_input.pressed(KeyCode::ArrowRight){
-        x_direction += 1.0;
-    }
-
-    if keyboard_input.pressed(KeyCode::ArrowUp){
-        y_direction += 1.0;
-    }
-
-    if keyboard_input.pressed(KeyCode::ArrowDown){
-        y_direction -= 1.0;
-    }
-
-    let new_x_pos = 
-        player_transform.translation.x + x_direction * PLAYER_SPEED * time.delta_secs();
-    
-    let new_y_pos =
-        player_transform.translation.y + y_direction * PLAYER_SPEED * time.delta_secs();
-
-    player_transform.translation.x = new_x_pos;
-    player_transform.translation.y = new_y_pos;
-}
-
-fn check_collision(
-    collider_query: Query<(Entity, &Transform, &Sprite), (With<Collider>, Without<Player>)>,
-    mut player: Single<(&mut Transform, &Sprite), With<Player>>){
-    for (collider_entity, collider_transform, collider_sprite) in &collider_query{
-        let collision = player_collision(
-            Aabb2d::new(
-                player.0.translation.truncate(), 
-                player.1.custom_size.unwrap()/2.,),
-            Aabb2d::new(
-                collider_transform.translation.truncate(),
-                collider_sprite.custom_size.unwrap()/2.,)
-            );
-        if let Some(collision) = collision{
-            let current_x = player.0.translation.x;
-            let current_y = player.0.translation.y;
-            match collision{
-                Collision::Left => player.0.translation.x = current_x - 3.0,
-                Collision::Right => player.0.translation.x = current_x + 3.0,
-                Collision::Top => player.0.translation.y = current_y + 3.0,
-                Collision::Bottom => player.0.translation.y = current_y - 3.0,
+    let delta_secs = time.delta_secs();
+    for mut linear_velocity in &mut query{
+        for key in keyboard_input.get_pressed(){
+            match key{
+                KeyCode::ArrowLeft => linear_velocity.x -= 50.0 * delta_secs,
+                KeyCode::ArrowRight => linear_velocity.x += 50.0 * delta_secs,
+                KeyCode::ArrowDown =>  linear_velocity.y -= 50.0 * delta_secs,
+                KeyCode::ArrowUp =>  linear_velocity.y += 250.0 * delta_secs,
+                _ => {}
             }
         }
-    };
-}
-
-#[derive(Debug, PartialEq, Eq, Copy, Clone)]
-enum Collision{
-    Left,
-    Right,
-    Top,
-    Bottom,
-}
-
-fn player_collision(player: Aabb2d, bounding_box: Aabb2d) -> Option<Collision>{
-    if !player.intersects(&bounding_box){
-        return None;
+        linear_velocity.y += GRAVITY * delta_secs;
     }
-    let closest = bounding_box.closest_point(player.center());
-    let offset = player.center() - closest;
-    let side = if offset.x.abs() > offset.y.abs() {
-        if offset.x < 0. {
-            Collision::Left
-        } else {
-            Collision::Right
-        }
-    } else if offset.y > 0. {
-        Collision::Top
-    } else {
-        Collision::Bottom
-    };
-
-    Some(side)
 }
+
+fn floor_collision(collision: Query<(Entity, &CollidingEntities)>, 
+    mut player_query: Query<&mut LinearVelocity, With<Player>>
+    ){
+    
+    for (entity, colliding_entities) in &collision{
+        if colliding_entities.is_empty(){
+            return;
+        }
+        if player_query.contains(entity)  {
+            for mut linear_velocity in &mut player_query{
+                if linear_velocity.y < 0.0{
+                    linear_velocity.y = 0.0;
+                }
+            }
+        }
+    }
+}
+
+

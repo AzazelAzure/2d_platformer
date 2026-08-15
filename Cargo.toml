@@ -4,5 +4,12 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+avian2d = "0.7.0"
 bevy = "0.19.1"
 wayland-client = "0.31.15"
+
+# Reduced debug info cuts the linker's memory/IO footprint drastically for a
+# dependency graph this size (Bevy + avian2d) - full debuginfo=2 was pushing
+# the link step past available RAM+swap and into thrashing.
+[profile.dev]
+debug = "line-tables-only"
