@@ -42,7 +42,7 @@ fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
         .add_systems(Startup, setup)
-        .add_systems(Update, move_player)
+        .add_systems(Update, (move_player, check_collision).chain())
         .run();
 }
 
@@ -103,4 +103,58 @@ fn move_player(
 
     player_transform.translation.x = new_x_pos;
     player_transform.translation.y = new_y_pos;
+}
+
+fn check_collision(
+    collider_query: Query<(Entity, &Transform, &Sprite), (With<Collider>, Without<Player>)>,
+    mut player: Single<(&mut Transform, &Sprite), With<Player>>){
+    for (collider_entity, collider_transform, collider_sprite) in &collider_query{
+        let collision = player_collision(
+            Aabb2d::new(
+                player.0.translation.truncate(), 
+                player.1.custom_size.unwrap()/2.,),
+            Aabb2d::new(
+                collider_transform.translation.truncate(),
+                collider_sprite.custom_size.unwrap()/2.,)
+            );
+        if let Some(collision) = collision{
+            let current_x = player.0.translation.x;
+            let current_y = player.0.translation.y;
+            match collision{
+                Collision::Left => player.0.translation.x = current_x - 3.0,
+                Collision::Right => player.0.translation.x = current_x + 3.0,
+                Collision::Top => player.0.translation.y = current_y + 3.0,
+                Collision::Bottom => player.0.translation.y = current_y - 3.0,
+            }
+        }
+    };
+}
+
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+enum Collision{
+    Left,
+    Right,
+    Top,
+    Bottom,
+}
+
+fn player_collision(player: Aabb2d, bounding_box: Aabb2d) -> Option<Collision>{
+    if !player.intersects(&bounding_box){
+        return None;
+    }
+    let closest = bounding_box.closest_point(player.center());
+    let offset = player.center() - closest;
+    let side = if offset.x.abs() > offset.y.abs() {
+        if offset.x < 0. {
+            Collision::Left
+        } else {
+            Collision::Right
+        }
+    } else if offset.y > 0. {
+        Collision::Top
+    } else {
+        Collision::Bottom
+    };
+
+    Some(side)
 }
