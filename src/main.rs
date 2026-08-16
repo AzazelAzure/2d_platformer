@@ -1,5 +1,4 @@
-use bevy::{
-    prelude::*,
+use bevy::{ prelude::*,
     camera::ScalingMode,
 };
 
@@ -110,16 +109,11 @@ impl Floor{
 }
 
 
-#[derive(Component)]
-#[require(Sprite, Transform)]
-struct Player;
-
-
 fn main() {
     App::new()
         .add_plugins((DefaultPlugins, PhysicsPlugins::default()))
         .add_systems(Startup, setup)
-        .add_systems(Update, (player_accel, floor_collision).chain())
+        .add_systems(Update, (player::player_accel, floor_collision).chain())
         .run();
 }
 
@@ -150,54 +144,19 @@ fn setup(
         CollidingEntities::default(),
         ));
 
-    // Player
-    commands.spawn((
-        Sprite::from_color(PLAYER_COLOR, Vec2::new(50.0, 50.0)),
-        RigidBody::Kinematic,
-        Collider::rectangle(50.0, 50.0),
-        CollisionEventsEnabled,
-        CollidingEntities::default(),
-        CollisionLayers::new(
-            GameLayer::Player,
-            [GameLayer::Ground, GameLayer::Enemy, GameLayer::Floor],
-            ),
-        Transform{
-            translation: Vec3::new(51.0, 55.0, 0.0),
-            ..default()
-            },
-        Player
-    ));
-
     // Walls
     commands.spawn(Wall::new(WallLocation::Left));
     commands.spawn(Wall::new(WallLocation::Bottom));
     commands.spawn(Wall::new(WallLocation::Top));
     commands.spawn(Wall::new(WallLocation::Right));
-}
-
-fn player_accel(
-    keyboard_input: Res<ButtonInput<KeyCode>>,
-    mut query: Query<&mut LinearVelocity, With<Player>>,
-    time: Res<Time>,
-    ){
-    let delta_secs = time.delta_secs();
-    let mut moving: bool= false;
-    for mut linear_velocity in &mut query{
-        for key in keyboard_input.get_pressed(){
-            match key{
-                KeyCode::ArrowLeft => {linear_velocity.x -= 50.0 * delta_secs; moving = true},
-                KeyCode::ArrowRight => {linear_velocity.x += 50.0 * delta_secs; moving = true},
-                KeyCode::ArrowDown =>  {linear_velocity.y -= 50.0 * delta_secs; moving = true},
-                KeyCode::ArrowUp =>  {linear_velocity.y += 250.0 * delta_secs; moving = true},
-                _ =>{}
-            }
-        }    
-    linear_velocity.y += GRAVITY * delta_secs;
-    if !moving{
-        if linear_velocity.x > 0.0 {linear_velocity.x -= 100.0 * delta_secs};
-        if linear_velocity.x < 0.0 {linear_velocity.x += 100.0 * delta_secs};
-        }
-    }
+    
+    // Player
+    commands.spawn((
+            player::Player::new(), 
+            CollisionLayers::new(
+                GameLayer::Player,
+                [GameLayer::Floor, GameLayer::Ground, GameLayer::Enemy],
+                )));
 }
 
 fn floor_collision(collision: Query<(Entity, &CollidingEntities), With<Floor>>, 
