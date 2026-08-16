@@ -5,6 +5,8 @@ use bevy::{
 
 use avian2d::prelude::*;
 
+mod player;
+
 // Floor Constants
 const FLOOR_THICKNESS: f32 = 30.0;
 const FLOOR_COLOR: Color = Color::srgb(1.0, 1.0, 1.0);
@@ -153,9 +155,8 @@ fn setup(
         Sprite::from_color(PLAYER_COLOR, Vec2::new(50.0, 50.0)),
         RigidBody::Kinematic,
         Collider::rectangle(50.0, 50.0),
-        LinearDamping(0.8),
-        ConstantForce::new(0.0, -100.0),
         CollisionEventsEnabled,
+        CollidingEntities::default(),
         CollisionLayers::new(
             GameLayer::Player,
             [GameLayer::Ground, GameLayer::Enemy, GameLayer::Floor],
@@ -180,30 +181,35 @@ fn player_accel(
     time: Res<Time>,
     ){
     let delta_secs = time.delta_secs();
+    let mut moving: bool= false;
     for mut linear_velocity in &mut query{
         for key in keyboard_input.get_pressed(){
             match key{
-                KeyCode::ArrowLeft => linear_velocity.x -= 50.0 * delta_secs,
-                KeyCode::ArrowRight => linear_velocity.x += 50.0 * delta_secs,
-                KeyCode::ArrowDown =>  linear_velocity.y -= 50.0 * delta_secs,
-                KeyCode::ArrowUp =>  linear_velocity.y += 250.0 * delta_secs,
-                _ => {}
+                KeyCode::ArrowLeft => {linear_velocity.x -= 50.0 * delta_secs; moving = true},
+                KeyCode::ArrowRight => {linear_velocity.x += 50.0 * delta_secs; moving = true},
+                KeyCode::ArrowDown =>  {linear_velocity.y -= 50.0 * delta_secs; moving = true},
+                KeyCode::ArrowUp =>  {linear_velocity.y += 250.0 * delta_secs; moving = true},
+                _ =>{}
             }
+        }    
+    linear_velocity.y += GRAVITY * delta_secs;
+    if !moving{
+        if linear_velocity.x > 0.0 {linear_velocity.x -= 100.0 * delta_secs};
+        if linear_velocity.x < 0.0 {linear_velocity.x += 100.0 * delta_secs};
         }
-        linear_velocity.y += GRAVITY * delta_secs;
     }
 }
 
-fn floor_collision(collision: Query<(Entity, &CollidingEntities)>, 
-    mut player_query: Query<&mut LinearVelocity, With<Player>>
+fn floor_collision(collision: Query<(Entity, &CollidingEntities), With<Floor>>, 
+    mut query: Query<&mut LinearVelocity>
     ){
     
     for (entity, colliding_entities) in &collision{
         if colliding_entities.is_empty(){
             return;
         }
-        if player_query.contains(entity)  {
-            for mut linear_velocity in &mut player_query{
+        if query.contains(entity)  {
+            for mut linear_velocity in &mut query{
                 if linear_velocity.y < 0.0{
                     linear_velocity.y = 0.0;
                 }
