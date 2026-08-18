@@ -4,7 +4,10 @@ use bevy::{ prelude::*,
 
 use avian2d::prelude::*;
 
+use crate::resources::PlayerStatus;
+
 mod player;
+mod resources;
 
 // Floor Constants
 const FLOOR_THICKNESS: f32 = 30.0;
@@ -112,8 +115,9 @@ impl Floor{
 fn main() {
     App::new()
         .add_plugins((DefaultPlugins, PhysicsPlugins::default()))
+        .init_resource::<PlayerStatus>()
         .add_systems(Startup, setup)
-        .add_systems(Update, (player::player_accel, floor_collision).chain())
+        .add_systems(Update, (floor_collision, player::player_physics, player::player_movement).chain())
         .run();
 }
 
@@ -159,19 +163,29 @@ fn setup(
                 )));
 }
 
-fn floor_collision(collision: Query<(Entity, &CollidingEntities), With<Floor>>, 
-    mut query: Query<&mut LinearVelocity>
+fn floor_collision(
+    collision: Query<(Entity, &mut CollidingEntities), With<Floor>>, 
+    mut query: Query<&mut LinearVelocity, Without<Floor>>,
+    layer_query: Query<&CollisionLayers>,
+    mut player_status: ResMut<PlayerStatus>,
     ){
-    
     for (entity, colliding_entities) in &collision{
         if colliding_entities.is_empty(){
             return;
         }
-        if query.contains(entity)  {
-            for mut linear_velocity in &mut query{
-                if linear_velocity.y < 0.0{
-                    linear_velocity.y = 0.0;
+        for e in colliding_entities.iter(){
+            if let Ok(layers) = layer_query.get(*e){
+                if layers.memberships.has_all(GameLayer::Player){
+                    player_status.onground = true;
+                    player_status.jumped = false;
+                    player_status.falling = false;
                 }
+            }
+            if query.contains(*e)  {
+                for mut linear_velocity in &mut query{
+                    if linear_velocity.y < 0.0{
+                        linear_velocity.y = 0.0;}
+               }
             }
         }
     }
